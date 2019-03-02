@@ -7,15 +7,23 @@ public class CameraController : MonoBehaviour {
     private Transform _transformCamera;         //Camera's transform
     private Transform _transformParent;         //Parent's (empty object) transform
 
-    private Vector3 _localRotation;             
+    private Vector3 _localRotation;             //Vector used to determine the position to reach for the camera through a pivot-based rotation        
     private float _cameraDistance = 5f;
+    private Vector3 _pivotPosition;
 
     public float _mouseSensitivity = 4f;
     public float _scrollSensitivity = 2f;
     public float _orbitDampening = 10f;         //How long it takes for the camera to reach its destination
     public float _scrollDampening = 6f;
+    public float _panSpeed = 0.5f;
+    public float _pivotTranslationDuration = 1f;
 
-    public bool _cameraDisabled = false;            
+    private float _t0;
+    private bool _shortClick = false;
+
+    public bool _cameraDisabled = false;
+
+
 
 	// Use this for initialization
 	void Start () {
@@ -25,16 +33,28 @@ public class CameraController : MonoBehaviour {
 	
     void Update()
     {
-        if (Input.GetMouseButtonDown(0))
+        //Store at each frame the gameobject pointed by the cursor, if any
+        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+        RaycastHit hit;
+
+        if (Physics.Raycast(ray, out hit) && hit.transform.tag == "Focusable")
         {
+            Debug.Log(hit.transform.name + " is focusable.");
+        }
 
-            Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-            RaycastHit hit;
+        //In case of mouse click, determine if single click or held button
+        if (Input.GetMouseButtonDown(0))
+            _t0 = Time.time;
+        if (Input.GetMouseButtonUp(0))
+            _shortClick = ((Time.time - _t0) <= 0.2f) ? true : false;
 
-            if (Physics.Raycast(ray, out hit))
+        //if (Input.GetMouseButtonDown(0))
+        if (_shortClick)
+        {
+            if (Physics.Raycast(ray, out hit) && hit.transform.tag == "Focusable")
             {
-                Debug.Log("Hit " + hit.transform.name.ToString());
                 //this.transform.parent.position = hit.transform.position;
+                StartCoroutine(MovePivotToPosition(hit.transform.position));
             }
         }
 
@@ -47,7 +67,7 @@ public class CameraController : MonoBehaviour {
 
         if (!_cameraDisabled)
         {
-            //Rotation of the camera based on mouse coordinates
+            //Rotation of the camera based on mouse coordinates, when the left click is held
             if (Input.GetMouseButton(0) && (Input.GetAxis("Mouse X") != 0 || Input.GetAxis("Mouse Y") != 0))
             {
                 _localRotation.x += Input.GetAxis("Mouse X") * _mouseSensitivity;
@@ -68,7 +88,7 @@ public class CameraController : MonoBehaviour {
                 this._cameraDistance += scrollAmount * -1f;
 
                 //This makes camera go no closer than 1.5m from target and no further than 100m
-                this._cameraDistance = Mathf.Clamp(this._cameraDistance, 2f, 100f);
+                this._cameraDistance = Mathf.Clamp(this._cameraDistance, 2f, 20f);
             }
         }
 
@@ -81,5 +101,27 @@ public class CameraController : MonoBehaviour {
             this._transformCamera.localPosition = new Vector3(0f, 0f, Mathf.Lerp(this._transformCamera.localPosition.z, this._cameraDistance * -1f, Time.deltaTime * _scrollDampening));
         }
 
+        //Paning movement based on mouse coordinates, when the middle click is held
+        if (Input.GetMouseButton(2) && (Input.GetAxis("Mouse X") != 0 || Input.GetAxis("Mouse Y") != 0))
+        {
+            Vector3 move = new Vector3(Input.GetAxis("Mouse X") * -1f, Input.GetAxis("Mouse Y") * -1f, 0f);
+            transform.parent.transform.Translate(move * _panSpeed, Space.Self);
+        }
+
+        _shortClick = false;
 	}
+
+    IEnumerator MovePivotToPosition(Vector3 pos)
+    {
+        float journey = 0f;
+        while (journey <= _pivotTranslationDuration)
+        {
+            journey += Time.deltaTime;
+            float percent = Mathf.Clamp01(journey / _pivotTranslationDuration);
+
+            _transformParent.position = Vector3.Lerp(_transformParent.position, pos, percent);
+
+            yield return null;
+        }
+    }
 }
