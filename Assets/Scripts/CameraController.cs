@@ -5,6 +5,14 @@ using UnityEngine.UI;
 
 public class CameraController : MonoBehaviour {
 
+    public GameObject _debugPanel;              //GameObject containing the debug panel script
+    private DebugPanel _debugPanelScript;
+        
+    private Vector3 _pivotInitialLocalPosition;
+    private Vector3 _pivotInitialLocalRotation;
+    private Vector3 _initialLocalRotation;
+    private float _initialCameraDistance;
+
     //General variables
     private Transform _transformCamera;         //Camera's transform
     private Transform _transformParent;         //Parent's (empty object) transform
@@ -28,18 +36,32 @@ public class CameraController : MonoBehaviour {
     public float _panSensitivity_W = 0.25f;     //Modifier applied to the panning sensitivity in Windows environment
 
     //Touch input variables
-    private Vector2 _touch0PreviousPos;          //Position of the touch[0] during previous frame
-    private Vector2 _touch0Direction;
-    private bool _touch0DirectionChoosen = false;
+    private float _distanceOnPreviousFrame = 0f;
+    private bool _isStationary = false;
+    private bool _isSlidingChosen = false;
 
-    public float _moveSensitivity_A = 1f;
+    public float _moveCoefficient_A = 1f;       //Modifier applied to swipes amplitude in Android environment
+    public float _dualTouchDeadzone_A = 50f;    //Deadzone, in pixels, in which spacing fingers doesn't alter zoom 
+    public float _zoomCoefficient_A = 1f;       //Modifier applied to the zoom input in Android environment
+    public float _panValidationDuration = 0.5f;     //The duration (in seconds) swap from rotating mode to panning mode from keeping the input stationary
+    public float _panCoefficient_A = 1f;        //Modifier applied to the panning input in Android environment
 
 
     // Use this for initialization
     void Start () {
+        _debugPanelScript = _debugPanel.GetComponent<DebugPanel>();
+
         this._transformCamera = this.transform;
         this._transformParent = this.transform.parent;
-	}
+
+        _pivotInitialLocalPosition = _transformParent.localPosition;
+        _pivotInitialLocalRotation = _transformParent.localRotation.eulerAngles;
+        _initialLocalRotation = _localRotation;
+        _initialCameraDistance = _cameraDistance;
+
+        if (Application.platform == RuntimePlatform.Android)
+            _debugPanelScript.DisplayPanningMode("Rotating");
+    }
 	
     void Update()
     {
@@ -49,8 +71,6 @@ public class CameraController : MonoBehaviour {
 
         //Touch inputs declaration
         Touch touch0 = new Touch();
-        _touch0PreviousPos = Vector2.zero;
-        _touch0Direction = Vector2.zero;
 
         //Camera status check (Windows only)
         if (Input.GetKeyDown(KeyCode.LeftShift))
@@ -106,7 +126,8 @@ public class CameraController : MonoBehaviour {
             }
 
             //TOUCH inputs
-            if (Application.platform == RuntimePlatform.Android) {
+            if (Application.platform == RuntimePlatform.Android)
+            {
 
                 //Register touches 
                 if (Input.touchCount > 0)
@@ -118,18 +139,43 @@ public class CameraController : MonoBehaviour {
                     switch (touch0.phase)
                     {
                         case (TouchPhase.Began):
-                            _touch0PreviousPos = touch0.position;
-                            _touch0DirectionChoosen = false;
                             _t0 = Time.time;
+                            //_isSlidingChosen = false;
+                            //_isStationary = false;
+                            break;
+                        case (TouchPhase.Stationary):
+                            if (!_isSlidingChosen)
+                            {
+                                if ((Time.time - _t0) >= _panValidationDuration)
+                                {
+                                    _isStationary = true;
+                                    _debugPanelScript.DisplayPanningMode("Panning");
+                                }
+                                else
+                                {
+                                    _isStationary = false;
+                                    _debugPanelScript.DisplayPanningMode("Rotating");
+                                }
+                            }
                             break;
                         case (TouchPhase.Moved):
-                            Debug.Log("Touch[0] delta: " + touch0.deltaPosition.ToString());
-                            _localRotation.x += touch0.deltaPosition.x * _moveSensitivity_A;
-                            _localRotation.y -= touch0.deltaPosition.y * _moveSensitivity_A;
+                            _isSlidingChosen = true;
+                            if (!_isStationary)
+                            {
+                                _localRotation.x += touch0.deltaPosition.x * _moveCoefficient_A * 0.1f;
+                                _localRotation.y -= touch0.deltaPosition.y * _moveCoefficient_A * 0.1f;
+                            }
+                            else
+                            {
+                                _panningDirection = new Vector3(touch0.deltaPosition.x * -1f, touch0.deltaPosition.y * -1f, 0f);
+                                _panningDirection *= _panCoefficient_A * 0.005f;
+                            }
                             break;
                         case (TouchPhase.Ended):
-                            _touch0DirectionChoosen = true;
                             _shortClick = ((Time.time - _t0) <= 0.2f) ? true : false;
+                            _isSlidingChosen = false;
+                            _isStationary = false;
+                            _debugPanelScript.DisplayPanningMode("Rotating");
                             break;
                         default:
                             Debug.Log("Unknown TouchPhase status.");
@@ -137,20 +183,43 @@ public class CameraController : MonoBehaviour {
                     }
                 }
 
-                //Zoom in/out
-                //Panning
-            }
+                //Zoom and pan
+                if (Input.touchCount == 2)      //Handle short click and drag and drop
+                {
+                    Touch touch1 = Input.GetTouch(1);
+                    float currentDistance = Vector2.Distance(touch0.position, touch1.position);
 
+                    //On first dual input
+                    if (touch0.phase == TouchPhase.Began || touch1.phase == TouchPhase.Began)
+                    {
+                        _distanceOnPreviousFrame = currentDistance;
+                    }
+
+                    //On dual input movement 
+                    if (touch0.phase == TouchPhase.Moved || touch1.phase == TouchPhase.Moved)
+                    {
+                        _zoomAmout = (currentDistance - _distanceOnPreviousFrame) * _zoomCoefficient_A * 0.001f;
+                        _distanceOnPreviousFrame = currentDistance;
+                    }
+
+                    //On dual input end
+                    if (touch0.phase == TouchPhase.Ended || touch1.phase == TouchPhase.Ended)
+                    {
+                        _distanceOnPreviousFrame = 0f;
+                    }
+                }
+            }
 
             //Process generic values
             //Clamp the y rotation to horizon and not flipping over at the top
-            _localRotation.y = Mathf.Clamp(_localRotation.y, -10f, 90f);
+            _localRotation.y = Mathf.Clamp(_localRotation.y, -20f, 90f);
 
             //Apply inputs 
             //Translate pivot to clicked "focusable" object
             if (_shortClick)
             {
-                if (Physics.Raycast(ray, out hit) && hit.transform.tag == "Focusable") {
+                if (Physics.Raycast(ray, out hit) && hit.transform.tag == "Focusable")
+                {
                     StartCoroutine(MovePivotToPosition(hit.transform.position));
                 }
             }
@@ -167,18 +236,15 @@ public class CameraController : MonoBehaviour {
             Quaternion QT = Quaternion.Euler(_localRotation.y, _localRotation.x, 0);
             this._transformParent.rotation = Quaternion.Lerp(this._transformParent.rotation, QT, Time.deltaTime * _orbitDampening);
 
-            if (this._transformCamera.localPosition.z != this._cameraDistance * -1f) {
+            if (this._transformCamera.localPosition.z != this._cameraDistance * -1f)
+            {
                 this._transformCamera.localPosition = new Vector3(0f, 0f, Mathf.Lerp(this._transformCamera.localPosition.z, this._cameraDistance * -1f, Time.deltaTime * _scrollDampening));
             }
 
-            //Debug.Log("Axes input: (" + Input.GetAxis("Mouse X") + ", " + Input.GetAxis("Mouse Y") + ")");
-            //Debug.Log("Local rotation: " + _localRotation.ToString());
-           
             //Input values reset (so values aren't carried to the next frames)
             _shortClick = false;
-            _zoomAmout = 0;     
-            _panningDirection = Vector3.zero;
-            _touch0PreviousPos = touch0.position;
+            _zoomAmout = 0;
+            _panningDirection = Vector3.zero;           
         }
     }
 
@@ -194,5 +260,13 @@ public class CameraController : MonoBehaviour {
 
             yield return null;
         }
+    }
+
+    public void ResetCamera()
+    {
+        _transformParent.localPosition = _pivotInitialLocalPosition;
+        _transformParent.localRotation = Quaternion.Euler(_pivotInitialLocalRotation);
+        _localRotation = _initialLocalRotation;
+        _cameraDistance = _initialCameraDistance;
     }
 }
