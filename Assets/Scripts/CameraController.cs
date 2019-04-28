@@ -14,45 +14,50 @@ public class CameraController : MonoBehaviour {
     private float _initialCameraDistance;
 
     //General variables
-    private Transform _transformCamera;         //Camera's transform
-    private Transform _transformParent;         //Parent's (empty object) transform
-    private Vector3 _localRotation;             //Vector used to determine the position to reach for the camera through a pivot-based rotation        
-    private Vector3 _pivotPosition;
-    private Vector3 _panningDirection;          //Vector describing the direction in which to move the camera and its pivot when panning
-    private float _cameraDistance = 5f;         //Distance between the camera and its pivot point
-    private float _zoomAmout;                   //How much the camera should zoom with the pivot point
+    private Transform _transformCamera;                 //Camera's transform
+    private Transform _transformParent;                 //Parent's (empty object) transform
+    private Vector3 _localRotation = new Vector3();     //Vector used to determine the position to reach for the camera through a pivot-based rotation        
+    private Vector3 _panningDirection;                  //Vector describing the direction in which to move the camera and its pivot when panning
+    public float _cameraDistance = 5f;                 //Distance between the camera and its pivot point
+    private float _zoomAmout = 0f;                      //How much the camera should zoom with the pivot point
 
-    public bool _cameraDisabled = false;        //Inputs don't affect the camera when true
-    public float _orbitDampening = 10f;         //How long it takes for the camera to reach its destination
+    public bool _cameraDisabled = false;                //Inputs don't affect the camera when true
+    public float _orbitDampening = 10f;                 //How long it takes for the camera to reach its destination
     public float _scrollDampening = 6f;
+    public float _zoomMinValue = 2f;
+    public float _zoomMaxValue = 50f;
     public float _pivotTranslationDuration = 1f;
 
     //Mouse input variables
-    private float _t0;                          //Timer used to determine wether the a mouse left click is short or held
+    private float _t0;                                  //Timer used to determine wether the a mouse left click is short or held
     private bool _shortClick = false;
 
-    public float _mouseSensitivity_W = 4f;      //Modifier applied to the drag mouse inputs in Windows environment
-    public float _scrollSensitivity_W = 2f;     //Modifier applied to the zoom value in Windows environment
-    public float _panSensitivity_W = 0.25f;     //Modifier applied to the panning sensitivity in Windows environment
+    public float _mouseSensitivity_W = 4f;              //Modifier applied to the drag mouse inputs in Windows environment
+    public float _scrollSensitivity_W = 2f;             //Modifier applied to the zoom value in Windows environment
+    public float _panSensitivity_W = 0.25f;             //Modifier applied to the panning sensitivity in Windows environment
 
     //Touch input variables
     private float _distanceOnPreviousFrame = 0f;
     private bool _isStationary = false;
     private bool _isSlidingChosen = false;
 
-    public float _moveCoefficient_A = 1f;       //Modifier applied to swipes amplitude in Android environment
-    public float _dualTouchDeadzone_A = 50f;    //Deadzone, in pixels, in which spacing fingers doesn't alter zoom 
-    public float _zoomCoefficient_A = 1f;       //Modifier applied to the zoom input in Android environment
-    public float _panValidationDuration = 0.5f;     //The duration (in seconds) swap from rotating mode to panning mode from keeping the input stationary
-    public float _panCoefficient_A = 1f;        //Modifier applied to the panning input in Android environment
+    public float _moveCoefficient_A = 1f;               //Modifier applied to swipes amplitude in Android environment
+    public float _dualTouchDeadzone_A = 50f;            //Deadzone, in pixels, in which spacing fingers doesn't alter zoom 
+    public float _zoomCoefficient_A = 1f;               //Modifier applied to the zoom input in Android environment
+    public float _panValidationDuration = 0.5f;         //The duration (in seconds) swap from rotating mode to panning mode from keeping the input stationary
+    public float _panCoefficient_A = 1f;                //Modifier applied to the panning input in Android environment
 
+    private void Awake()
+    {
+        this._transformCamera = this.transform;
+        this._transformParent = this.transform.parent;
+
+        _cameraDistance = _transformCamera.position.z * -1f;
+    }
 
     // Use this for initialization
     void Start () {
         _debugPanelScript = _debugPanel.GetComponent<DebugPanel>();
-
-        this._transformCamera = this.transform;
-        this._transformParent = this.transform.parent;
 
         _pivotInitialLocalPosition = _transformParent.localPosition;
         _pivotInitialLocalRotation = _transformParent.localRotation.eulerAngles;
@@ -218,7 +223,7 @@ public class CameraController : MonoBehaviour {
             //Translate pivot to clicked "focusable" object
             if (_shortClick)
             {
-                if (Physics.Raycast(ray, out hit) && hit.transform.tag == "Focusable")
+                if (Physics.Raycast(ray, out hit) && ((hit.transform.tag == "Focusable") || (hit.transform.tag == "Agent")))
                 {
                     StartCoroutine(MovePivotToPosition(hit.transform.position));
                 }
@@ -227,23 +232,23 @@ public class CameraController : MonoBehaviour {
             //Camera zoom
             _zoomAmout *= this._cameraDistance;         //Makes the zoom proportional to the distance (the longer the faster)        
             this._cameraDistance += _zoomAmout * -1f;   //Add to the camera distance so the camera moves during the "Camera transformations" part   
-            this._cameraDistance = Mathf.Clamp(this._cameraDistance, 2f, 20f);      //Makes camera go no closer than "min" from target and no further than "max"
+            this._cameraDistance = Mathf.Clamp(this._cameraDistance, _zoomMinValue, _zoomMaxValue);      //Makes camera go no closer than "min" from target and no further than "max"
+            if (this._transformCamera.localPosition.z != this._cameraDistance * -1f)
+            {
+                this._transformCamera.localPosition = new Vector3(0f, 0f, Mathf.Lerp(this._transformCamera.localPosition.z, this._cameraDistance * -1f, Time.deltaTime * _scrollDampening));
+            }
 
             //Camera panning
             transform.parent.transform.Translate(_panningDirection, Space.Self);
 
             //Camera transformations
             Quaternion QT = Quaternion.Euler(_localRotation.y, _localRotation.x, 0);
+            //Quaternion QT = Quaternion.identity;
             this._transformParent.rotation = Quaternion.Lerp(this._transformParent.rotation, QT, Time.deltaTime * _orbitDampening);
-
-            if (this._transformCamera.localPosition.z != this._cameraDistance * -1f)
-            {
-                this._transformCamera.localPosition = new Vector3(0f, 0f, Mathf.Lerp(this._transformCamera.localPosition.z, this._cameraDistance * -1f, Time.deltaTime * _scrollDampening));
-            }
 
             //Input values reset (so values aren't carried to the next frames)
             _shortClick = false;
-            _zoomAmout = 0;
+            _zoomAmout = 0f;
             _panningDirection = Vector3.zero;           
         }
     }
